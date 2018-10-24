@@ -6,13 +6,18 @@ import com.o2o.dao.ShopDao;
 import com.o2o.dto.ShopExecution;
 import com.o2o.entity.Shop;
 import com.o2o.entity.ShopAuthMap;
+import com.o2o.entity.ShopCategory;
 import com.o2o.enums.ShopStateEnum;
 import com.o2o.service.ShopService;
+import com.o2o.util.FileUtil;
+import com.o2o.util.ImageUtil;
 import com.o2o.util.PageCalculator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.commons.CommonsMultipartFile;
 
+import java.util.Date;
 import java.util.List;
 
 @Service
@@ -44,21 +49,108 @@ public class ShopServiceImpl implements ShopService {
 
     @Override
     public ShopExecution getByEmployeeId(long employeeId) throws RuntimeException {
-        return null;
+        List<Shop> shopList = shopDao.queryByEmployeeId(employeeId);
+        ShopExecution shopExecution = new ShopExecution();
+        shopExecution.setShopList(shopList);
+        return shopExecution;
     }
 
     @Override
     public Shop getByShopId(long shopId) {
-        return null;
+        return shopDao.queryByShopId(shopId);
     }
 
     @Override
+    @Transactional
     public ShopExecution addShop(Shop shop, CommonsMultipartFile shopImg) throws RuntimeException {
-        return null;
+        if (shop == null) {
+            return new ShopExecution(ShopStateEnum.NULL_SHOP_INFO);
+        }
+        try {
+            shop.setEnableStatus(0);
+            shop.setCreateTime(new Date());
+            shop.setLastEditTime(new Date());
+            if (shop.getShopCategory() != null) {
+                Long shopCategoryId = shop.getShopCategory().getShopCategoryId();
+                ShopCategory shopCategory = new ShopCategory();
+                shopCategory = shopCategoryDao.queryShopCategoryById(shopCategoryId);
+                ShopCategory parentCategory = new ShopCategory();
+                parentCategory.setShopCategoryId(shopCategory.getParentId());
+                shop.setParentCategory(parentCategory);
+            }
+            int effectedNum = shopDao.insertShop(shop);
+            if (effectedNum <= 0) {
+                throw new RuntimeException("店铺创建失败");
+            } else {
+                try {
+                    if (shopImg != null) {
+                        addShopImg(shop, shopImg);
+                        effectedNum = shopDao.updateShop(shop);
+                        if (effectedNum <= 0) {
+                            throw new RuntimeException("创建图片地址失败");
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException("addShopImg error: "
+                            + e.getMessage());
+                }
+                ShopAuthMap shopAuthMap = new ShopAuthMap();
+                shopAuthMap.setEmployeeId(shop.getOwnerId());
+                shopAuthMap.setShopId(shop.getShopId());
+                shopAuthMap.setName("");
+                shopAuthMap.setTitle("Owner");
+                shopAuthMap.setTitleFlag(1);
+                shopAuthMap.setCreateTime(new Date());
+                shopAuthMap.setLastEditTime(new Date());
+                shopAuthMap.setEnableStatus(1);
+                try {
+                    effectedNum = shopAuthMapDao.insertShopAuthMap(shopAuthMap);if (effectedNum <= 0) {
+                        throw new RuntimeException("授权创建失败");
+                    } else {// 创建成功
+                        return new ShopExecution(ShopStateEnum.CHECK, shop);
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException("insertShopAuthMap error: "
+                            + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("insertShop error: " + e.getMessage());
+        }
     }
 
     @Override
+    @Transactional
     public ShopExecution modifyShop(Shop shop, CommonsMultipartFile shopImg) throws RuntimeException {
-        return null;
+        if (shop == null || shop.getShopId() == null) {
+            return new ShopExecution(ShopStateEnum.NULL_SHOPID);
+        } else {
+            try {
+                if (shopImg != null) {
+                    Shop tempShop = shopDao.queryByShopId(shop.getShopId());
+                    if (tempShop.getShopImg() != null) {
+                        FileUtil.deleteFile(tempShop.getShopImg());
+                    }
+                    addShopImg(shop, shopImg);
+                }
+                shop.setLastEditTime(new Date());
+                int effectedNum = shopDao.updateShop(shop);
+                if (effectedNum <= 0) {
+                    return new ShopExecution(ShopStateEnum.INNER_ERROR);
+                } else {// 创建成功
+                    shop = shopDao.queryByShopId(shop.getShopId());
+                    return new ShopExecution(ShopStateEnum.SUCCESS, shop);
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("modifyShop error: "
+                        + e.getMessage());
+            }
+        }
+    }
+
+    private void addShopImg(Shop shop, CommonsMultipartFile shopImg) {
+        String dest = FileUtil.getShopImagePath(shop.getShopId());
+        String shopImgAddr = ImageUtil.generateThumbnail(shopImg, dest);
+        shop.setShopAddr(shopImgAddr);
     }
 }
